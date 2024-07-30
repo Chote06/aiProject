@@ -1,1 +1,1 @@
-streamlit tensorflow opencv-python-headless pillow openai
+streamlit tensorflow pillow opencv-python-headless openai
