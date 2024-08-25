@@ -35,19 +35,38 @@ def chat_with_gpt(emotion, user_input):
     )
     return response.choices[0].text.strip()
 
-# Streamlit 카메라 입력
-image = st.camera_input("웹캠을 사용하여 사진을 찍어주세요")
+# 웹캠에서 실시간 비디오 피드를 가져오기
+cap = cv2.VideoCapture(0)  # 웹캠 장치 ID는 일반적으로 0입니다.
 
-if image is not None:
-    # 이미지를 화면에 표시
-    st.image(image, caption="Captured Image", use_column_width=True)
+# 스트림이 열려있는 동안 계속해서 프레임을 가져옴
+if cap.isOpened():
+    stframe = st.empty()  # Streamlit에서 이미지를 표시할 공간 확보
     
-    # 표정 인식
-    emotion = predict_emotion(image, model)
-    st.write(f"감지된 감정: {emotion}")
-    
-    # 사용자 입력 받기
-    user_input = st.text_input("당신: ", "")
-    if user_input:
-        response = chat_with_gpt(emotion, user_input)
-        st.write(f"ChatGPT: {response}")
+    while True:
+        ret, frame = cap.read()  # 프레임 읽기
+        if not ret:
+            st.write("카메라에서 프레임을 읽을 수 없습니다.")
+            break
+        
+        # 이미지 처리를 위한 OpenCV BGR -> RGB 변환
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img_pil = Image.fromarray(rgb_frame)  # PIL 이미지로 변환
+        
+        # 표정 인식
+        emotion = predict_emotion(img_pil, model)
+        
+        # 화면에 인식된 감정 출력
+        cv2.putText(frame, f"Emotion: {emotion}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+        
+        # Streamlit을 통해 화면에 프레임 표시
+        stframe.image(frame, channels="BGR")
+        
+        # 사용자 입력 받기
+        user_input = st.text_input("당신: ", "")
+        if user_input:
+            response = chat_with_gpt(emotion, user_input)
+            st.write(f"ChatGPT: {response}")
+
+    cap.release()
+else:
+    st.write("카메라를 열 수 없습니다.")
