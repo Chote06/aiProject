@@ -1,7 +1,9 @@
 import streamlit as st
-import tensorflow as tf
-import numpy as np
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+import av
 import cv2
+import numpy as np
+import tensorflow as tf
 from PIL import Image
 import openai
 import os
@@ -10,19 +12,15 @@ import os
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
 # TensorFlow SavedModel 로드
-model = tf.saved_model.load('model')
-
-# Streamlit 앱 설정
-st.title("감정 챗봇")
-st.header("감정을 인식하여 대화하는 AI")
+model = tf.saved_model.load('model')  # 여기서 'model'은 모델 경로입니다.
 
 # 표정 인식 함수
 def predict_emotion(image, model):
-    img_array = cv2.resize(np.array(image), (224, 224))  # 모델의 입력 크기에 맞게 조정
+    img_array = np.array(image)
+    img_array = cv2.resize(img_array, (224, 224))  # 모델의 입력 크기에 맞게 조정
     img_array = np.expand_dims(img_array, axis=0) / 255.0  # 정규화
-    # 모델 예측
     predictions = model(img_array, training=False)
-    class_names = ["happy", "normal", "sad", "sleepy", "surprised"]  # 모델에 맞는 클래스 이름 설정
+    class_names = ["happy", "normal", "sad", "sleepy", "surprised"]
     return class_names[np.argmax(predictions)]
 
 # OpenAI ChatGPT 호출 함수
@@ -35,38 +33,38 @@ def chat_with_gpt(emotion, user_input):
     )
     return response.choices[0].text.strip()
 
-# 웹캠에서 실시간 비디오 피드를 가져오기
-cap = cv2.VideoCapture(0)  # 웹캠 장치 ID는 일반적으로 0입니다.
+# WebRTC VideoProcessor 클래스 정의
+class EmotionProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.model = model
+        self.emotion = None
 
-# 스트림이 열려있는 동안 계속해서 프레임을 가져옴
-if cap.isOpened():
-    stframe = st.empty()  # Streamlit에서 이미지를 표시할 공간 확보
-    
-    while True:
-        ret, frame = cap.read()  # 프레임 읽기
-        if not ret:
-            st.write("카메라에서 프레임을 읽을 수 없습니다.")
-            break
-        
-        # 이미지 처리를 위한 OpenCV BGR -> RGB 변환
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img_pil = Image.fromarray(rgb_frame)  # PIL 이미지로 변환
-        
-        # 표정 인식
-        emotion = predict_emotion(img_pil, model)
-        
-        # 화면에 인식된 감정 출력
-        cv2.putText(frame, f"Emotion: {emotion}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-        
-        # Streamlit을 통해 화면에 프레임 표시
-        stframe.image(frame, channels="BGR")
-        
-        # 사용자 입력 받기
-        user_input = st.text_input("당신: ", "")
-        if user_input:
+    def recv(self, frame):
+        img = frame.to_image()  # VideoFrame을 PIL 이미지로 변환
+        self.emotion = predict_emotion(img, self.model)  # 감정 예측
+        frame = np.array(img)  # 다시 numpy 배열로 변환
+        # 감정 텍스트 추가
+        cv2.putText(frame, f"Emotion: {self.emotion}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+        return av.VideoFrame.from_ndarray(frame, format="bgr24")
+
+# Streamlit 앱 설정
+st.title("실시간 감정 인식 챗봇")
+
+# WebRTC 스트리머 시작
+webrtc_ctx = webrtc_streamer(
+    key="emotion-detection",
+    video_processor_factory=EmotionProcessor,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
+)
+
+# 사용자 입력 받기
+if webrtc_ctx.video_processor:
+    user_input = st.text_input("당신: ", "")
+    if user_input:
+        emotion = webrtc_ctx.video_processor.emotion  # 현재 감정 가져오기
+        if emotion:
             response = chat_with_gpt(emotion, user_input)
             st.write(f"ChatGPT: {response}")
-
-    cap.release()
-else:
-    st.write("카메라를 열 수 없습니다.")
+        else:
+            st.write("감정 인식 중입니다. 잠시만 기다려주세요.")
