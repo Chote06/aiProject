@@ -41,43 +41,38 @@ def chat_with_gpt(emotion, user_input):
 class EmotionProcessor(VideoProcessorBase):
     def __init__(self):
         self.model = model
-        self.emotion = None
-        self.frame_count = 0
+        self.last_frame = None
 
     def recv(self, frame):
-        self.frame_count += 1
         img = frame.to_image()  # VideoFrame을 PIL 이미지로 변환
+        self.last_frame = img  # 최신 프레임 저장
+        return av.VideoFrame.from_image(img)  # 프레임을 그대로 반환 (화면 출력은 안함)
 
-        # 매 10번째 프레임마다 감정 예측 (프레임 처리 주기 줄이기)
-        if self.frame_count % 10 == 0:
-            self.emotion = predict_emotion(img, self.model)
-
-        frame = np.array(img)  # 다시 numpy 배열로 변환
-        # 감정 텍스트 추가
-        if self.emotion:
-            cv2.putText(frame, f"Emotion: {self.emotion}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-
-        return av.VideoFrame.from_ndarray(frame, format="bgr24")
+    def get_emotion(self):
+        if self.last_frame is not None:
+            return predict_emotion(self.last_frame, self.model)
+        return None
 
 # Streamlit 앱 설정
 st.title("실시간 감정 인식 챗봇")
 
-# WebRTC 스트리머 시작
+# WebRTC 스트리머 시작 (비디오 출력 없이 감정만 인식)
 webrtc_ctx = webrtc_streamer(
     key="emotion-detection",
     video_processor_factory=EmotionProcessor,
     media_stream_constraints={"video": True, "audio": False},
     async_processing=True,
-    mode=WebRtcMode.SENDRECV
+    mode=WebRtcMode.SENDONLY
 )
 
-# 사용자 입력 받기
+# 사용자 입력 받기 및 처리
 if webrtc_ctx.video_processor:
     user_input = st.text_input("당신: ", "")
     if user_input:
-        emotion = webrtc_ctx.video_processor.emotion  # 현재 감정 가져오기
+        # 웹캠 프레임에서 감정 예측
+        emotion = webrtc_ctx.video_processor.get_emotion()
         if emotion:
             response = chat_with_gpt(emotion, user_input)
             st.write(f"ChatGPT: {response}")
         else:
-            st.write("감정 인식 중입니다. 잠시만 기다려주세요.")
+            st.write("웹캠에서 프레임을 캡처할 수 없습니다. 다시 시도해주세요.")
